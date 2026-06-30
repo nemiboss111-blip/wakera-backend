@@ -1,54 +1,66 @@
-// ============================================================
-// WAKERA BACKEND SERVER
-// Deployed on Render.com
-// ============================================================
-
-const express  = require('express');
-const multer   = require('multer');
-const axios    = require('axios');
+const express = require('express');
+const multer = require('multer');
+const axios = require('axios');
 const FormData = require('form-data');
-const cors     = require('cors');
+const cors = require('cors');
 
 const app = express();
 
-// ── CORS - Allow your Firebase website to talk to this server ──
 app.use(cors({
     origin: [
         'http://localhost:3000',
-        'http://localhost:5500',       // VS Code Live Server
+        'http://localhost:5500',
         'http://127.0.0.1:5500',
-        'https://wakera-b22df.web.app',        // Your Firebase site
-        'https://wakera-b22df.firebaseapp.com' // Firebase alternate URL
+        'https://wakera-b22df.web.app',
+        'https://wakera-b22df.firebaseapp.com'
     ],
     methods: ['GET', 'POST', 'DELETE'],
     allowedHeaders: ['Content-Type']
 }));
 
-// ── File upload config - store in memory ──
+app.use(express.json());
+
 const storage = multer.memoryStorage();
-const upload  = multer({
+
+const uploadVideo = multer({
     storage,
-    limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
+    limits: { fileSize: 2 * 1024 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('video/')) {
+        if (file.mimetype && file.mimetype.startsWith('video/')) {
             cb(null, true);
         } else {
-            cb(new Error('Only video files are allowed!'), false);
+            cb(new Error('Only video files are allowed.'));
         }
     }
 });
 
-// ── Read ImageKit credentials from environment variables ──
-// On Render, you set these in the dashboard (not in .env file)
-const IMAGEKIT_PRIVATE_KEY  = process.env.IMAGEKIT_PRIVATE_KEY;
-const IMAGEKIT_PUBLIC_KEY   = process.env.IMAGEKIT_PUBLIC_KEY;
+const uploadThumbnail = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype && file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed for thumbnails.'));
+        }
+    }
+});
+
+const IMAGEKIT_PRIVATE_KEY = process.env.IMAGEKIT_PRIVATE_KEY;
+const IMAGEKIT_PUBLIC_KEY = process.env.IMAGEKIT_PUBLIC_KEY;
 const IMAGEKIT_URL_ENDPOINT = process.env.IMAGEKIT_URL_ENDPOINT;
 
-// ============================================================
-// ROUTES
-// ============================================================
+function ensureImageKitConfigured(res) {
+    if (!IMAGEKIT_PRIVATE_KEY) {
+        res.status(500).json({
+            success: false,
+            error: 'ImageKit private key is not configured on the server.'
+        });
+        return false;
+    }
+    return true;
+}
 
-// ── Health Check - Render uses this to know server is alive ──
 app.get('/', (req, res) => {
     res.json({
         status: 'ok',
@@ -57,9 +69,10 @@ app.get('/', (req, res) => {
     });
 });
 
-// ── Upload Video ──
-app.post('/upload-video', upload.single('video'), async (req, res) => {
+app.post('/upload-video', uploadVideo.single('video'), async (req, res) => {
     try {
+        if (!ensureImageKitConfigured(res)) return;
+
         if (!req.file) {
             return res.status(400).json({
                 success: false,
@@ -67,84 +80,15 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
             });
         }
 
-        // Check that ImageKit credentials are set
-        if (!IMAGEKIT_PRIVATE_KEY) {
-            return res.status(500).json({
-                success: false,
-                error: 'ImageKit credentials not configured on server.'
-            });
-        }
-
-        console.log(`📦 Received: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} MB)`);
-
-        // Build form to send to ImageKit
-        const form = new FormData();
-        form.append('file', req.file.buffer, {
-            filename:    req.file.originalname,
-            contentType: req.file.mimetype,
-        });
-        form.append('fileName',        `wakera_${Date.now()}_${req.file.originalname}`);
-        form.append('folder',          '/wakera-videos');
-        form.append('useUniqueFileName', 'true');
-
-        // Send to ImageKit
-        console.log('⬆️  Sending to ImageKit...');
-        const ikResponse = await axios.post(
-            'https://upload.imagekit.io/api/v1/files/upload',
-            form,
-            {
-                auth: {
-                    username: IMAGEKIT_PRIVATE_KEY,
-                    password: ''
-                },
-                headers: {
-                    ...form.getHeaders()
-                },
-                maxContentLength: Infinity,
-                maxBodyLength:    Infinity,
-                timeout: 300000 // 5 minute timeout for large files
-            }
-        );
-
-        console.log('✅ ImageKit upload complete:', ikResponse.data.url);
-
-        res.json({
-            success: true,
-            url:     ikResponse.data.url,
-            fileId:  ikResponse.data.fileId,
-            name:    ikResponse.data.name
-        });
-
-    } catch (error) {
-        console.error('❌ Upload error:', error.message);
-
-        // Send specific error info back
-        res.status(500).json({
-            success: false,
-            error: error.response?.data?.message || error.message || 'Upload failed'
-        });
-    }
-});
-
-// ── Upload Thumbnail Image ──
-app.post('/upload-thumbnail', upload.single('thumbnail'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                error: 'No thumbnail file received.'
-            });
-        }
-
-        console.log(`🖼️ Thumbnail received: ${req.file.originalname}`);
+        console.log(`📦 Received video: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} MB)`);
 
         const form = new FormData();
         form.append('file', req.file.buffer, {
-            filename:    req.file.originalname || 'thumbnail.jpg',
-            contentType: req.file.mimetype || 'image/jpeg',
+            filename: req.file.originalname,
+            contentType: req.file.mimetype
         });
-        form.append('fileName',  `thumb_${Date.now()}.jpg`);
-        form.append('folder',    '/wakera-thumbnails');
+        form.append('fileName', `wakera_${Date.now()}_${req.file.originalname}`);
+        form.append('folder', '/wakera-videos');
         form.append('useUniqueFileName', 'true');
 
         const ikResponse = await axios.post(
@@ -157,76 +101,134 @@ app.post('/upload-thumbnail', upload.single('thumbnail'), async (req, res) => {
                 },
                 headers: { ...form.getHeaders() },
                 maxContentLength: Infinity,
-                maxBodyLength:    Infinity,
+                maxBodyLength: Infinity,
+                timeout: 300000
             }
         );
 
-        console.log('✅ Thumbnail uploaded:', ikResponse.data.url);
-
         res.json({
             success: true,
-            url:     ikResponse.data.url,
-            fileId:  ikResponse.data.fileId
+            url: ikResponse.data.url,
+            fileId: ikResponse.data.fileId,
+            name: ikResponse.data.name
         });
-
     } catch (error) {
-        console.error('❌ Thumbnail upload error:', error.message);
+        console.error('❌ Video upload error:', error.response?.data || error.message);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: error.response?.data?.message || error.message || 'Video upload failed'
         });
     }
 });
 
-// ── Delete Video ──
+app.post('/upload-thumbnail', uploadThumbnail.single('thumbnail'), async (req, res) => {
+    try {
+        if (!ensureImageKitConfigured(res)) return;
+
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                error: 'No thumbnail file received.'
+            });
+        }
+
+        const originalName = req.file.originalname || 'thumbnail.jpg';
+        const extension = originalName.includes('.') ? originalName.split('.').pop() : 'jpg';
+
+        console.log(`🖼️ Received thumbnail: ${originalName}`);
+
+        const form = new FormData();
+        form.append('file', req.file.buffer, {
+            filename: originalName,
+            contentType: req.file.mimetype || 'image/jpeg'
+        });
+        form.append('fileName', `thumb_${Date.now()}.${extension}`);
+        form.append('folder', '/wakera-thumbnails');
+        form.append('useUniqueFileName', 'true');
+
+        const ikResponse = await axios.post(
+            'https://upload.imagekit.io/api/v1/files/upload',
+            form,
+            {
+                auth: {
+                    username: IMAGEKIT_PRIVATE_KEY,
+                    password: ''
+                },
+                headers: { ...form.getHeaders() },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+                timeout: 120000
+            }
+        );
+
+        res.json({
+            success: true,
+            url: ikResponse.data.url,
+            fileId: ikResponse.data.fileId,
+            name: ikResponse.data.name
+        });
+    } catch (error) {
+        console.error('❌ Thumbnail upload error:', error.response?.data || error.message);
+        res.status(500).json({
+            success: false,
+            error: error.response?.data?.message || error.message || 'Thumbnail upload failed'
+        });
+    }
+});
+
 app.delete('/delete-video/:fileId', async (req, res) => {
     try {
+        if (!ensureImageKitConfigured(res)) return;
+
         const { fileId } = req.params;
 
         if (!fileId) {
             return res.status(400).json({
                 success: false,
-                error: 'No fileId provided'
+                error: 'No fileId provided.'
             });
         }
 
-        console.log(`🗑️  Deleting file: ${fileId}`);
-
-        await axios.delete(
-            `https://api.imagekit.io/v1/files/${fileId}`,
-            {
-                auth: {
-                    username: IMAGEKIT_PRIVATE_KEY,
-                    password: ''
-                }
+        await axios.delete(`https://api.imagekit.io/v1/files/${fileId}`, {
+            auth: {
+                username: IMAGEKIT_PRIVATE_KEY,
+                password: ''
             }
-        );
+        });
 
-        console.log('✅ File deleted from ImageKit');
         res.json({ success: true });
-
     } catch (error) {
-        console.error('❌ Delete error:', error.message);
+        console.error('❌ Delete error:', error.response?.data || error.message);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: error.response?.data?.message || error.message || 'Delete failed'
         });
     }
 });
 
-// ============================================================
-// START SERVER
-// ============================================================
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        return res.status(400).json({
+            success: false,
+            error: err.message
+        });
+    }
 
-// Render gives us the PORT automatically via environment variable
+    if (err) {
+        return res.status(400).json({
+            success: false,
+            error: err.message || 'Server error'
+        });
+    }
+
+    next();
+});
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-    console.log(`
-╔════════════════════════════════════════╗
-║   🎬 Wakera Backend Running            ║
-║   Port     : ${PORT}                      ║
-║   ImageKit : ${IMAGEKIT_PRIVATE_KEY ? '✅ Configured' : '❌ NOT SET'}          ║
-╚════════════════════════════════════════╝
-    `);
+    console.log(`Wakera backend running on port ${PORT}`);
+    console.log(`ImageKit private key configured: ${IMAGEKIT_PRIVATE_KEY ? 'YES' : 'NO'}`);
+    console.log(`ImageKit public key configured: ${IMAGEKIT_PUBLIC_KEY ? 'YES' : 'NO'}`);
+    console.log(`ImageKit URL endpoint configured: ${IMAGEKIT_URL_ENDPOINT ? 'YES' : 'NO'}`);
 });
