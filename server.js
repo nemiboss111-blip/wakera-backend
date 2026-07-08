@@ -3,8 +3,44 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const cors = require('cors');
+const admin = require('firebase-admin');
 
 const app = express();
+
+// Initialize Firebase Admin SDK for Secure Token Verification
+try {
+    admin.initializeApp({
+        credential: admin.credential.applicationDefault(), // Relies on GOOGLE_APPLICATION_CREDENTIALS env variable
+        projectId: "wakera-b22df"
+    });
+    console.log("🛡️ Firebase Admin SDK initialized successfully.");
+} catch (e) {
+    console.warn("⚠️ Firebase Admin initialization failed. Ensure you have configured environment variables on your host:", e.message);
+}
+
+// Middleware to verify Firebase JWT Auth Token before allowing uploads
+async function checkAuth(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({
+            success: false,
+            error: 'Unauthorized: Access denied. Please log in first.'
+        });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1];
+    try {
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        req.user = decodedToken; // Add decoded user details to request object
+        next();
+    } catch (err) {
+        console.error('❌ Token Verification Error:', err.message);
+        return res.status(403).json({
+            success: false,
+            error: 'Unauthorized: Invalid or expired authentication session.'
+        });
+    }
+}
 
 app.use(cors({
     origin: [
@@ -15,7 +51,7 @@ app.use(cors({
         'https://wakera-b22df.firebaseapp.com'
     ],
     methods: ['GET', 'POST', 'DELETE'],
-    allowedHeaders: ['Content-Type']
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
@@ -64,12 +100,13 @@ function ensureImageKitConfigured(res) {
 app.get('/', (req, res) => {
     res.json({
         status: 'ok',
-        message: 'Wakera backend is running!',
+        message: 'Wakera secure backend is running!',
         timestamp: new Date().toISOString()
     });
 });
 
-app.post('/upload-video', uploadVideo.single('video'), async (req, res) => {
+// Protect Video Uploads with checkAuth Middleware
+app.post('/upload-video', checkAuth, uploadVideo.single('video'), async (req, res) => {
     try {
         if (!ensureImageKitConfigured(res)) return;
 
@@ -80,7 +117,7 @@ app.post('/upload-video', uploadVideo.single('video'), async (req, res) => {
             });
         }
 
-        console.log(`📦 Received video: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} MB)`);
+        console.log(`📦 Received video: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} MB) from User: ${req.user.uid}`);
 
         const form = new FormData();
         form.append('file', req.file.buffer, {
@@ -121,7 +158,8 @@ app.post('/upload-video', uploadVideo.single('video'), async (req, res) => {
     }
 });
 
-app.post('/upload-thumbnail', uploadThumbnail.single('thumbnail'), async (req, res) => {
+// Protect Thumbnail Uploads with checkAuth Middleware
+app.post('/upload-thumbnail', checkAuth, uploadThumbnail.single('thumbnail'), async (req, res) => {
     try {
         if (!ensureImageKitConfigured(res)) return;
 
@@ -135,7 +173,7 @@ app.post('/upload-thumbnail', uploadThumbnail.single('thumbnail'), async (req, r
         const originalName = req.file.originalname || 'thumbnail.jpg';
         const extension = originalName.includes('.') ? originalName.split('.').pop() : 'jpg';
 
-        console.log(`🖼️ Received thumbnail: ${originalName}`);
+        console.log(`🖼️ Received thumbnail: ${originalName} from User: ${req.user.uid}`);
 
         const form = new FormData();
         form.append('file', req.file.buffer, {
@@ -176,7 +214,8 @@ app.post('/upload-thumbnail', uploadThumbnail.single('thumbnail'), async (req, r
     }
 });
 
-app.delete('/delete-video/:fileId', async (req, res) => {
+// Protect Delete Video Endpoints with checkAuth Middleware
+app.delete('/delete-video/:fileId', checkAuth, async (req, res) => {
     try {
         if (!ensureImageKitConfigured(res)) return;
 
@@ -188,6 +227,8 @@ app.delete('/delete-video/:fileId', async (req, res) => {
                 error: 'No fileId provided.'
             });
         }
+
+        console.log(`🗑️ Processing delete request for fileId: ${fileId} from User: ${req.user.uid}`);
 
         await axios.delete(`https://api.imagekit.io/v1/files/${fileId}`, {
             auth: {
@@ -227,7 +268,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-    console.log(`Wakera backend running on port ${PORT}`);
+    console.log(`Wakera secure backend running on port ${PORT}`);
     console.log(`ImageKit private key configured: ${IMAGEKIT_PRIVATE_KEY ? 'YES' : 'NO'}`);
     console.log(`ImageKit public key configured: ${IMAGEKIT_PUBLIC_KEY ? 'YES' : 'NO'}`);
     console.log(`ImageKit URL endpoint configured: ${IMAGEKIT_URL_ENDPOINT ? 'YES' : 'NO'}`);
