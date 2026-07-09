@@ -7,15 +7,14 @@ const admin = require('firebase-admin');
 
 const app = express();
 
-// Initialize Firebase Admin SDK for Secure Token Verification
+// Initialize Firebase Admin SDK cleanly for Signature Verification (Render-friendly!)
 try {
     admin.initializeApp({
-        credential: admin.credential.applicationDefault(), // Relies on GOOGLE_APPLICATION_CREDENTIALS env variable
         projectId: "wakera-b22df"
     });
-    console.log("🛡️ Firebase Admin SDK initialized successfully.");
+    console.log("🛡️ Firebase Admin SDK initialized successfully for public token verification.");
 } catch (e) {
-    console.warn("⚠️ Firebase Admin initialization failed. Ensure you have configured environment variables on your host:", e.message);
+    console.warn("⚠️ Firebase Admin initialization failed:", e.message);
 }
 
 // Middleware to verify Firebase JWT Auth Token before allowing uploads
@@ -42,6 +41,7 @@ async function checkAuth(req, res, next) {
     }
 }
 
+// Allow CORS Requests from Localhost and all Wakera Domains
 app.use(cors({
     origin: [
         'http://localhost:3000',
