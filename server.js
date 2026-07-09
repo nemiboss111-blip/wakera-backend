@@ -48,7 +48,9 @@ app.use(cors({
         'http://localhost:5500',
         'http://127.0.0.1:5500',
         'https://wakera-b22df.web.app',
-        'https://wakera-b22df.firebaseapp.com'
+        'https://wakera-b22df.firebaseapp.com',
+        'https://wakera.org',
+        'https://www.wakera.org'
     ],
     methods: ['GET', 'POST', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
